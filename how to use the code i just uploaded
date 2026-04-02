@@ -1,0 +1,3 @@
+upload the esp32 code to the esp32 attached to the hbridge on the shelf, set the IDE device to ESP32-WROOM-DA module
+
+just like run the python code after the esp32 starts the server
