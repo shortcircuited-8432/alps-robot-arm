@@ -1,0 +1,88 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+#define EMG_PIN 32
+#define LED_PIN 2
+
+float smoothed = 0;
+float alpha = 0.08;
+int threshold = 60;
+unsigned long lastTrigger = 0;
+int holdTime = 200;
+
+// BLE
+BLEServer* pServer = nullptr;
+BLECharacteristic* pCharacteristic = nullptr;
+bool deviceConnected = false;
+
+class MyServerCallbacks : public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) { deviceConnected = true; }
+    void onDisconnect(BLEServer* pServer) { deviceConnected = false; }
+};
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  pinMode(LED_PIN, OUTPUT);
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+
+  Serial.println("starting BLE");
+  BLEDevice::init("ESP32_EMG");
+  Serial.println("BLEDevice init done");
+
+  pServer = BLEDevice::createServer();
+  if(!pServer) Serial.println("failed to create server");
+  else Serial.println("server created");
+
+  pServer->setCallbacks(new MyServerCallbacks());
+  Serial.println("callbacks set");
+
+  BLEService *pService = pServer->createService(BLEUUID((uint16_t)0xFFE0));
+  if(!pService) Serial.println("failed to create service");
+  else Serial.println("service created");
+
+  pCharacteristic = pService->createCharacteristic(
+      BLEUUID((uint16_t)0xFFE1),
+      BLECharacteristic::PROPERTY_NOTIFY
+  );
+  if(!pCharacteristic) Serial.println("failed to create characteristic");
+  else Serial.println("characteristic created");
+
+  pCharacteristic->addDescriptor(new BLE2902());
+  pService->start();
+  Serial.println("service started");
+
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  if(!pAdvertising) Serial.println("failed to get advertising");
+  else Serial.println("sdvertising created");
+
+  pAdvertising->start();
+  Serial.println("BLE EMG server started");
+
+}
+
+void loop() {
+  int raw = analogRead(EMG_PIN);
+  int centered = raw - 2048;
+  int magnitude = abs(centered);
+  smoothed = alpha * magnitude + (1 - alpha) * smoothed;
+
+  if (smoothed > threshold) lastTrigger = millis();
+  digitalWrite(LED_PIN, (millis() - lastTrigger < holdTime) ? HIGH : LOW);
+
+  if (deviceConnected) {
+    char buffer[10];
+    dtostrf(smoothed, 4, 2, buffer);
+    Serial.print("wrote");
+    Serial.println(buffer);
+    pCharacteristic->setValue(buffer);
+    pCharacteristic->notify();
+  }else{
+    Serial.println("not connected");
+  }
+
+  delay(10); // ~100 Hz
+}
